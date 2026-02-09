@@ -7,7 +7,7 @@ set -euo pipefail
 
 REPO_DIR="$HOME/git/pi-config"
 PI_DIR="$HOME/.pi/agent"
-GITHUB_USER="rami1982"
+GITHUB_USER="rami2102"
 REPO_NAME="pi-config"
 
 # ─── Clone or pull ───────────────────────────────────────────────────

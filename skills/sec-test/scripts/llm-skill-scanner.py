@@ -81,11 +81,16 @@ RULES: List[Tuple[str, str, str, str, str, str]] = [
      'critical',
      'Never require root; use least-privilege; avoid world-writable permissions'),
 
-    (r'rm\s+(-rf?|--force)\s+(/|~|\$HOME|\$\{?HOME\}?)',
+    (r'rm\s+(-[a-zA-Z]*f[a-zA-Z]*|--force)\s+(/|~|\$HOME|\$\{?HOME\}?|\.\.|\.|\*)',
      'excessive-agency', 'Excessive Agency — Destructive Delete',
-     'Skill instructs deletion of critical system or home directories',
+     'Skill instructs force-deletion of dangerous targets (/, ~, ., .., *)',
      'critical',
      'Avoid recursive force-delete on root or home; scope deletions to project dirs'),
+    (r'rm\s+-[a-zA-Z]*r[a-zA-Z]*\s',
+     'excessive-agency', 'Excessive Agency — Recursive Delete',
+     'Skill uses recursive rm — may destroy directory trees',
+     'high',
+     'Scope deletions carefully; prefer trash/safe-rm'),
 
     (r'(curl|wget)\s+[^\|]*\|\s*(ba)?sh',
      'excessive-agency', 'Excessive Agency — Pipe Remote Code to Shell',

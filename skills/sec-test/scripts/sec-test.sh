@@ -10,7 +10,7 @@
 #
 # Exit codes: 0 = SAFE, 1 = DANGEROUS
 
-set -euo pipefail
+set -uo pipefail
 
 # ── Resolve paths ────────────────────────────────────────────────────
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

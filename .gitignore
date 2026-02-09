@@ -1,0 +1,11 @@
+auth.json
+sessions/
+bin/
+*.key
+*.pem
+.env
+.env.*
+*.secret
+__pycache__/
+*.pyc
+docs/security-test-scans/

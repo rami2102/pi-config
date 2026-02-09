@@ -1,23 +1,66 @@
 #!/usr/bin/env bash
-# sec-test.sh — Orchestrate 4-layer security scan on a skill folder
-# Usage: sec-test.sh <target-folder> [report-dir]
+# sec-test.sh — Orchestrate 5-layer security scan on a skill folder
+# Usage: sec-test.sh <target-folder> [report-dir] [--llm <model>] [--no-pi-validate]
 #
 # Layers:
 #   1. Code Security  — pattern-based vuln scan (secrets, injection, XSS, cmd-injection, path-traversal)
 #   2. LLM Security   — agent/skill-specific risks (prompt injection, excessive agency, data exfil, etc.)
 #   3. Dependency Vuln — CVE scan on package.json / requirements.txt / go.mod
 #   4. Compliance      — SOC2 / PCI-DSS / HIPAA / GDPR control checks
+#   5. LLM Validation  — pi agent analyses each file with AI reasoning
 #
 # Exit codes: 0 = SAFE, 1 = DANGEROUS
 
 set -uo pipefail
+
+# ── Load config file defaults ────────────────────────────────────────
+SKILL_DIR_EARLY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONF_FILE="${SKILL_DIR_EARLY}/sec-test.conf.json"
+LLM_NAME=""
+PI_VALIDATE="no"
+
+if [[ -f "$CONF_FILE" ]]; then
+  # Read pi_validate from config (default: true → "yes")
+  CONF_PI_VALIDATE=$(python3 -c "import json,sys; d=json.load(open('$CONF_FILE')); print('yes' if d.get('pi_validate', True) else 'no')" 2>/dev/null)
+  [[ -n "$CONF_PI_VALIDATE" ]] && PI_VALIDATE="$CONF_PI_VALIDATE"
+
+  # Read llm_name from config
+  CONF_LLM=$(python3 -c "import json,sys; d=json.load(open('$CONF_FILE')); v=d.get('llm_name',''); print(v if v != 'default' else '')" 2>/dev/null)
+  [[ -n "$CONF_LLM" ]] && LLM_NAME="$CONF_LLM"
+fi
+
+# ── Parse flags (extract --llm and --no-pi-validate before positional args) ──
+POSITIONAL=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --llm)
+      LLM_NAME="$2"
+      shift 2
+      ;;
+    --no-pi-validate)
+      PI_VALIDATE="no"
+      shift
+      ;;
+    --pi-validate)
+      PI_VALIDATE="yes"
+      shift
+      ;;
+    *)
+      POSITIONAL+=("$1")
+      shift
+      ;;
+  esac
+done
+
+set -- "${POSITIONAL[@]}"
 
 # ── Resolve paths ────────────────────────────────────────────────────
 SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="${SKILL_DIR}/scripts"
 SECOPS_SCRIPTS="/home/node/git/pi-cool/alireza-claude-skills/engineering-team/senior-secops/scripts"
 
-TARGET="${1:?Usage: sec-test.sh <target-folder> [report-dir]}"
+TARGET="${1:?Usage: sec-test.sh <target-folder> [report-dir] [--llm <model>] [--no-pi-validate]}"
 TARGET="$(cd "$TARGET" && pwd)"
 
 REPORT_DIR="${2:-${PWD}/docs/security-test-scans}"
@@ -55,7 +98,7 @@ add_counts() {
 # ══════════════════════════════════════════════════════════════════════
 # LAYER 1 — Code Security (pattern scanner)
 # ══════════════════════════════════════════════════════════════════════
-cyan "▶ Layer 1/4: Code Security Scanner"
+cyan "▶ Layer 1/5: Code Security Scanner"
 L1_JSON="${JSON_DIR}/code-security.json"
 
 if python3 "${SECOPS_SCRIPTS}/security_scanner.py" "$TARGET" --json --output "$L1_JSON" --severity low 2>&1; then
@@ -81,11 +124,11 @@ else
   LAYER_REASONS+=("Code scan: no critical/high findings (${L1_MEDIUM} medium, ${L1_LOW} low)")
 fi
 
-# Get top findings for report
+# Get all findings for report
 L1_TOP_FINDINGS=$(python3 -c "
 import json
 d=json.load(open('$L1_JSON'))
-for f in d.get('findings',[])[:10]:
+for f in d.get('findings',[]):
     sev=f['severity'].upper()
     print(f'| {sev} | {f[\"category\"]} | {f[\"file_path\"]}:{f[\"line_number\"]} | {f[\"description\"][:80]} |')
 " 2>/dev/null || echo "| - | - | - | No findings |")
@@ -94,7 +137,7 @@ for f in d.get('findings',[])[:10]:
 # ══════════════════════════════════════════════════════════════════════
 # LAYER 2 — LLM / Agent Skill Security (custom pattern scan)
 # ══════════════════════════════════════════════════════════════════════
-cyan "▶ Layer 2/4: LLM & Agent Skill Security"
+cyan "▶ Layer 2/5: LLM & Agent Skill Security"
 L2_JSON="${JSON_DIR}/llm-security.json"
 
 python3 "${SCRIPTS_DIR}/llm-skill-scanner.py" "$TARGET" --json --output "$L2_JSON" 2>&1 || true
@@ -120,7 +163,7 @@ fi
 L2_TOP_FINDINGS=$(python3 -c "
 import json
 d=json.load(open('$L2_JSON'))
-for f in d.get('findings',[])[:10]:
+for f in d.get('findings',[]):
     sev=f['severity'].upper()
     print(f'| {sev} | {f[\"category\"]} | {f[\"file_path\"]}:{f[\"line_number\"]} | {f[\"description\"][:80]} |')
 " 2>/dev/null || echo "| - | - | - | No findings |")
@@ -129,7 +172,7 @@ for f in d.get('findings',[])[:10]:
 # ══════════════════════════════════════════════════════════════════════
 # LAYER 3 — Dependency Vulnerability Assessment
 # ══════════════════════════════════════════════════════════════════════
-cyan "▶ Layer 3/4: Dependency Vulnerability Assessment"
+cyan "▶ Layer 3/5: Dependency Vulnerability Assessment"
 L3_JSON="${JSON_DIR}/vuln-assess.json"
 
 if python3 "${SECOPS_SCRIPTS}/vulnerability_assessor.py" "$TARGET" --json --output "$L3_JSON" --severity low 2>&1; then
@@ -160,7 +203,7 @@ fi
 L3_TOP_FINDINGS=$(python3 -c "
 import json
 d=json.load(open('$L3_JSON'))
-for v in sorted(d.get('vulnerabilities',[]), key=lambda x: x['cvss_score'], reverse=True)[:10]:
+for v in sorted(d.get('vulnerabilities',[]), key=lambda x: x['cvss_score'], reverse=True):
     sev=v['severity'].upper()
     print(f'| {sev} | {v[\"cve_id\"]} | {v[\"package\"]}@{v[\"installed_version\"]} | {v[\"description\"][:60]} → upgrade to {v[\"fixed_version\"]} |')
 " 2>/dev/null || echo "| - | - | - | No vulnerabilities found |")
@@ -169,7 +212,7 @@ for v in sorted(d.get('vulnerabilities',[]), key=lambda x: x['cvss_score'], reve
 # ══════════════════════════════════════════════════════════════════════
 # LAYER 4 — Compliance Check
 # ══════════════════════════════════════════════════════════════════════
-cyan "▶ Layer 4/4: Compliance Check"
+cyan "▶ Layer 4/5: Compliance Check"
 L4_JSON="${JSON_DIR}/compliance.json"
 
 if python3 "${SECOPS_SCRIPTS}/compliance_checker.py" "$TARGET" --framework all --json --output "$L4_JSON" 2>&1; then
@@ -204,6 +247,76 @@ for c in d.get('controls',[]):
 
 
 # ══════════════════════════════════════════════════════════════════════
+# LAYER 5 — LLM Validation (pi agent per file)
+# ══════════════════════════════════════════════════════════════════════
+cyan "▶ Layer 5/5: LLM Validation (pi)"
+L5_JSON="${JSON_DIR}/llm-validate.json"
+
+L5_CMD=(python3 "${SCRIPTS_DIR}/llm-validate-scanner.py" "$TARGET" --json --output "$L5_JSON")
+if [[ -n "$LLM_NAME" ]]; then
+  L5_CMD+=(--llm "$LLM_NAME")
+fi
+if [[ "$PI_VALIDATE" == "no" ]]; then
+  L5_CMD+=(--no-pi-validate)
+fi
+
+"${L5_CMD[@]}" 2>&1 || true
+
+L5_STATUS=$(python3 -c "import json; d=json.load(open('$L5_JSON')); print(d.get('status','unknown'))" 2>/dev/null || echo "unknown")
+L5_VERDICT=$(python3 -c "import json; d=json.load(open('$L5_JSON')); print(d.get('overall_verdict','UNKNOWN'))" 2>/dev/null || echo "UNKNOWN")
+L5_SEVERITY=$(python3 -c "import json; d=json.load(open('$L5_JSON')); print(d.get('overall_severity','none'))" 2>/dev/null || echo "none")
+L5_FILES_SCANNED=$(python3 -c "import json; d=json.load(open('$L5_JSON')); print(d.get('files_scanned',0))" 2>/dev/null || echo 0)
+L5_TOTAL=$(python3 -c "import json; d=json.load(open('$L5_JSON')); print(d.get('total_findings',0))" 2>/dev/null || echo 0)
+L5_CRITICAL=$(python3 -c "import json; d=json.load(open('$L5_JSON')); print(d.get('severity_counts',{}).get('critical',0))" 2>/dev/null || echo 0)
+L5_HIGH=$(python3 -c "import json; d=json.load(open('$L5_JSON')); print(d.get('severity_counts',{}).get('high',0))" 2>/dev/null || echo 0)
+L5_MEDIUM=$(python3 -c "import json; d=json.load(open('$L5_JSON')); print(d.get('severity_counts',{}).get('medium',0))" 2>/dev/null || echo 0)
+L5_LOW=$(python3 -c "import json; d=json.load(open('$L5_JSON')); print(d.get('severity_counts',{}).get('low',0))" 2>/dev/null || echo 0)
+L5_LLM_NAME=$(python3 -c "import json; d=json.load(open('$L5_JSON')); print(d.get('llm_name','default'))" 2>/dev/null || echo "default")
+
+add_counts "$L5_CRITICAL" "$L5_HIGH" "$L5_MEDIUM" "$L5_LOW"
+
+if [[ "$L5_STATUS" == "skipped" ]]; then
+  LAYER_VERDICTS+=("SKIPPED")
+  LAYER_REASONS+=("LLM validation: disabled (--no-pi-validate or config)")
+elif (( L5_CRITICAL > 0 || L5_HIGH > 0 )); then
+  LAYER_VERDICTS+=("DANGEROUS")
+  reason="LLM validation (pi): ${L5_CRITICAL} critical, ${L5_HIGH} high findings across ${L5_FILES_SCANNED} files"
+  LAYER_REASONS+=("$reason")
+  DANGEROUS_REASONS+=("$reason")
+else
+  LAYER_VERDICTS+=("SAFE")
+  LAYER_REASONS+=("LLM validation (pi): no critical/high (${L5_FILES_SCANNED} files scanned, ${L5_TOTAL} findings, model: ${L5_LLM_NAME})")
+fi
+
+L5_TOP_FINDINGS=$(python3 -c "
+import json
+d=json.load(open('$L5_JSON'))
+for f in d.get('findings',[]):
+    sev=f.get('severity','?').upper()
+    cat=f.get('category','?')
+    fp=f.get('file_path','?')
+    ln=f.get('line_number','?')
+    title=f.get('title','?')[:60]
+    print(f'| {sev} | {cat} | {fp}:{ln} | {title} |')
+" 2>/dev/null || echo "| - | - | - | No findings |")
+
+L5_FILE_VERDICTS=$(python3 -c "
+import json
+d=json.load(open('$L5_JSON'))
+for fr in d.get('file_results',[]):
+    icon = '✅' if fr['verdict']=='SAFE' else ('🔴' if fr['verdict']=='DANGEROUS' else '⚠️')
+    fp=fr['file_path']
+    sev=fr.get('severity','none')
+    nf=len(fr.get('findings',[]))
+    err=fr.get('error','')
+    if err:
+        print(f'| {icon} {fr[\"verdict\"]} | {fp} | {sev} | {nf} | ⚠️ {err[:60]} |')
+    else:
+        print(f'| {icon} {fr[\"verdict\"]} | {fp} | {sev} | {nf} | - |')
+" 2>/dev/null || echo "| - | - | - | - | No files scanned |")
+
+
+# ══════════════════════════════════════════════════════════════════════
 # OVERALL VERDICT
 # ══════════════════════════════════════════════════════════════════════
 if (( TOTAL_CRITICAL > 0 || TOTAL_HIGH > 0 )) || [[ " ${LAYER_VERDICTS[*]} " == *" DANGEROUS "* ]]; then
@@ -217,7 +330,7 @@ if [[ "$OVERALL" == "DANGEROUS" ]]; then
   OVERALL_REASON=$(printf '%s; ' "${DANGEROUS_REASONS[@]}")
   OVERALL_REASON="${OVERALL_REASON%; }"
 else
-  OVERALL_REASON="All 4 security layers passed — no critical/high issues found"
+  OVERALL_REASON="All 5 security layers passed — no critical/high issues found"
 fi
 
 # ══════════════════════════════════════════════════════════════════════
@@ -239,6 +352,7 @@ cat > "$REPORT_FILE" << REPORT_EOF
 | **Date** | ${NOW_DATE} |
 | **Time (UTC)** | ${NOW_TIME:0:2}:${NOW_TIME:2:2}:${NOW_TIME:4:2} |
 | **Target** | \`${TARGET}\` |
+| **LLM Model** | \`${L5_LLM_NAME}\` |
 | **Verdict** | ${VERDICT_BADGE} |
 | **Reason** | ${OVERALL_REASON} |
 
@@ -261,6 +375,7 @@ cat > "$REPORT_FILE" << REPORT_EOF
 | 2 | LLM & Agent Skill Security | ${LAYER_VERDICTS[1]} | ${LAYER_REASONS[1]} |
 | 3 | Dependency Vulnerabilities | ${LAYER_VERDICTS[2]} | ${LAYER_REASONS[2]} |
 | 4 | Compliance Check | ${LAYER_VERDICTS[3]} | ${LAYER_REASONS[3]} |
+| 5 | LLM Validation (pi) | ${LAYER_VERDICTS[4]} | ${LAYER_REASONS[4]} |
 
 ---
 
@@ -304,6 +419,24 @@ ${L4_TOP_FINDINGS}
 
 ---
 
+## Layer 5: LLM Validation (pi)
+
+**Model:** \`${L5_LLM_NAME}\`  |  **Files scanned:** ${L5_FILES_SCANNED}  |  **Findings:** ${L5_TOTAL}
+
+### Per-File Verdicts
+
+| Verdict | File | Severity | Findings | Notes |
+|---------|------|----------|----------|-------|
+${L5_FILE_VERDICTS}
+
+### Top Findings
+
+| Severity | Category | Location | Finding |
+|----------|----------|----------|---------|
+${L5_TOP_FINDINGS}
+
+---
+
 ## Scan Methodology
 
 | Layer | Tool / Method | What It Checks |
@@ -312,6 +445,7 @@ ${L4_TOP_FINDINGS}
 | 2 — LLM/Skill Security | Agent-skill-specific scanner | Prompt injection, excessive agency, data exfiltration, system prompt leakage, unsafe shell/eval, supply chain |
 | 3 — Dependencies | CVE database scanner | Known vulnerabilities in npm, Python, Go dependencies |
 | 4 — Compliance | Framework checker | SOC 2, PCI-DSS, HIPAA, GDPR controls |
+| 5 — LLM Validation | pi agent (per file) | AI-powered analysis catching context-dependent threats, obfuscated attacks, subtle social engineering |
 
 > Report generated by **sec-test** skill — $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 REPORT_EOF

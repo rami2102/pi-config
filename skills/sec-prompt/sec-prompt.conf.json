@@ -1,0 +1,4 @@
+{
+  "llm_name": "default",
+  "_comment": "LLM name for model-specific injection rules. Values: default (same as pi), claude-3-opus, claude-3.5-sonnet, gpt-4o, gpt-4, llama-3, gemini-pro, etc. Overridden by --llm flag or user prompt."
+}

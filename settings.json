@@ -1,0 +1,18 @@
+{
+  "lastChangelogVersion": "0.52.9",
+  "defaultProvider": "anthropic",
+  "defaultModel": "claude-opus-4-6",
+  "skills": [
+    "~/git/pi-pkgs/skills"
+  ],
+  "promptTemplates": [
+    "~/git/pi-pkgs/prompts"
+  ],
+  "enabledModels": [
+    "anthropic/claude-opus-4-6",
+    "google-gemini-cli/gemini-3-flash-preview",
+    "google-gemini-cli/gemini-3-pro-preview",
+    "openai-codex/gpt-5.3-codex",
+    "openai-codex/gpt-5.1-codex-mini"
+  ]
+}
